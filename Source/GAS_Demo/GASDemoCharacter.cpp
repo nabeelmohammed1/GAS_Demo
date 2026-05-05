@@ -2,33 +2,100 @@
 
 
 #include "GASDemoCharacter.h"
+#include "DemoAtrribute.h"	
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Net/UnrealNetwork.h"
 
-// Sets default values
 AGASDemoCharacter::AGASDemoCharacter()
 {
- 	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	bReplicates = true;
 
+	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
+	AbilitySystemComponent->SetIsReplicated(true);
+	AbilitySystemComponent->SetReplicationMode(ASCReplicationMode);
+
+	DemoAttributeSet = CreateDefaultSubobject<UDemoAttributeSet>(TEXT("DemoAttributeSet"));
+
+	// ... (Rest of your movement/capsule config)
 }
 
-// Called when the game starts or when spawned
+void AGASDemoCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+}
+
 void AGASDemoCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
 }
 
-// Called every frame
-void AGASDemoCharacter::Tick(float DeltaTime)
+void AGASDemoCharacter::PossessedBy(AController* NewController)
 {
-	Super::Tick(DeltaTime);
-
+	Super::PossessedBy(NewController);
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+		GrantStartingAbilities();
+	}
 }
 
-// Called to bind functionality to input
-void AGASDemoCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+void AGASDemoCharacter::OnRep_PlayerState()
 {
-	Super::SetupPlayerInputComponent(PlayerInputComponent);
-
+	Super::OnRep_PlayerState();
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
 }
 
+UAbilitySystemComponent* AGASDemoCharacter::GetAbilitySystemComponent() const
+{
+	return AbilitySystemComponent;
+}
+
+void AGASDemoCharacter::GrantStartingAbilities()
+{
+	if (!AbilitySystemComponent || !HasAuthority()) return;
+
+	for (TSubclassOf<UGameplayAbility>& Ability : StartingAbilities)
+	{
+		if (Ability)
+		{
+			AbilitySystemComponent->GiveAbility(FGameplayAbilitySpec(Ability, 1, -1, this));
+		}
+	}
+	SendAbilitiesChangedEvent();
+}
+
+void AGASDemoCharacter::RemoveAbilities(TArray<FGameplayAbilitySpecHandle> AbilityHandlesToRemove)
+{
+	if (!AbilitySystemComponent || !HasAuthority()) return;
+
+	for (FGameplayAbilitySpecHandle Handle : AbilityHandlesToRemove)
+	{
+		AbilitySystemComponent->ClearAbility(Handle);
+	}
+	SendAbilitiesChangedEvent();
+}
+
+void AGASDemoCharacter::SendAbilitiesChangedEvent()
+{
+	FGameplayTag EventTag = FGameplayTag::RequestGameplayTag(FName("Event.Abilities.Changed"));
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(this, EventTag, FGameplayEventData());
+}
+
+void AGASDemoCharacter::ServerSendGameplayEventToSelf_Implementation(FGameplayEventData EventData)
+{
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(this, EventData.EventTag, EventData);
+}
+
+void AGASDemoCharacter::Tick(float DeltaTime) { Super::Tick(DeltaTime); }
+void AGASDemoCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) { Super::SetupPlayerInputComponent(PlayerInputComponent); }
